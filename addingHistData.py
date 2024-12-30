@@ -3,8 +3,8 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # API Keys
-API_KEY = "PKCS6JK0RLPEEOCA11KO"
-SECRET_KEY = "BZ9qKKrhl1wnuGxbUDiL186jPUQGg8SPwW24ikSP"
+API_KEY = ""
+SECRET_KEY = ""
 
 headers = {
     "accept": "application/json",
