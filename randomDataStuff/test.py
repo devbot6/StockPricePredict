@@ -4,8 +4,8 @@ import requests
 url = "https://data.alpaca.markets/v2/stocks/bars"
 headers = {
     "accept": "application/json",
-    "APCA-API-KEY-ID": "PKCS6JK0RLPEEOCA11KO",
-    "APCA-API-SECRET-KEY": "BZ9qKKrhl1wnuGxbUDiL186jPUQGg8SPwW24ikSP",
+    "APCA-API-KEY-ID": "",
+    "APCA-API-SECRET-KEY": "",
 }
 
 # Query Parameters
