@@ -2,57 +2,70 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
 import torch
 from torch.utils.data import DataLoader, TensorDataset
+import torch.nn as nn
+import matplotlib.pyplot as plt
+import os
 
 # Load the data
-df = pd.read_csv('cleaned_HistoricalData_file.csv')
+df = pd.read_csv('cleaned_HistoricalData_file2.csv')
 
-# Inspect the first few rows of the data
-print(df.head())
+# Print available columns to verify
+print("Available columns:", df.columns.tolist())
 
 # Convert timestamp to datetime
 df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601')
-
-
-# Set timestamp as index (if needed)
 df.set_index('timestamp', inplace=True)
 
-# Select relevant features (you can choose which features you want to use)
-features = ['trade_price', 'trade_size']
+# Get all numerical features automatically
+features = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
+print("\nNumerical features found:", features)
 
-# You can optionally create your target feature (for example, future price)
-# For simplicity, let's predict the 'bar_close' as the target
-target = 'trade_price'
+# Check if 'trade_price' exists in the dataframe, if not, use the first numerical column as target
+if 'trade_price' in features:
+    target = 'trade_price'
+else:
+    target = features[0]  # Use first numerical column as target
+    print(f"\nWarning: 'trade_price' not found. Using '{target}' as target variable instead.")
 
-# Normalize features
+# Ensure target is in features for scaling
+if target not in features:
+    features.append(target)
+
+# Remove target from input features to avoid data leakage
+input_features = [f for f in features if f != target]
+print(f"\nTarget variable: {target}")
+print(f"Input features: {input_features}")
+
+# Normalize all features
 scaler = MinMaxScaler(feature_range=(0, 1))
 df_scaled = pd.DataFrame(scaler.fit_transform(df[features]), columns=features, index=df.index)
 
-# Optionally, for target scaling (if needed):
-target_scaler = MinMaxScaler(feature_range=(0, 1))
-df_scaled[target] = target_scaler.fit_transform(df[[target]])
-
-# Create sequences for LSTM (using a sliding window approach)
-def create_sequences(data, target_column, seq_length):
+# Create sequences for LSTM
+def create_sequences(data, target_column, input_columns, seq_length):
     sequences = []
     targets = []
     
     for i in range(len(data) - seq_length):
-        seq = data.iloc[i:i+seq_length][features].values
+        seq = data.iloc[i:i+seq_length][input_columns].values
         target = data.iloc[i+seq_length][target_column]
         sequences.append(seq)
         targets.append(target)
     
     return np.array(sequences), np.array(targets)
 
-# Set the sequence length (e.g., 60 days of data for each prediction)
+# Set sequence length
 seq_length = 60
 
 # Create sequences
-X, y = create_sequences(df_scaled, target, seq_length)
+X, y = create_sequences(df_scaled, target, input_features, seq_length)
 
-# Split the data into training and testing sets
+print(f"\nSequence shape: {X.shape}")
+print(f"Target shape: {y.shape}")
+
+# Split the data
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
 
 # Convert to PyTorch tensors
@@ -61,72 +74,54 @@ y_train_tensor = torch.tensor(y_train, dtype=torch.float32).view(-1, 1)
 X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
 y_test_tensor = torch.tensor(y_test, dtype=torch.float32).view(-1, 1)
 
-# Create DataLoader for training and testing
+# Create DataLoader
 train_data = TensorDataset(X_train_tensor, y_train_tensor)
 test_data = TensorDataset(X_test_tensor, y_test_tensor)
 
 train_loader = DataLoader(train_data, batch_size=64, shuffle=False)
 test_loader = DataLoader(test_data, batch_size=64, shuffle=False)
 
-import torch.nn as nn
-
 class LSTMModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, output_size=1):
         super(LSTMModel, self).__init__()
-        
-        # LSTM layer
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
-        
-        # Fully connected layer for output
         self.fc = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
-        # Passing through LSTM layer
         lstm_out, _ = self.lstm(x)
-        
-        # Only get the output of the last time step
         out = self.fc(lstm_out[:, -1, :])
-        
         return out
 
-# Hyperparameters
-input_size = len(features)  # Number of input features
-hidden_size = 64  # Number of LSTM units
-num_layers = 2  # Number of LSTM layers
-output_size = 1  # Predicting one value (stock price)
+# Modified hyperparameters
+input_size = len(input_features)
+hidden_size = 128
+num_layers = 2
+output_size = 1
 
-# Instantiate the model
+# Initialize model, criterion, and optimizer
 model = LSTMModel(input_size, hidden_size, num_layers, output_size)
-
-
-# Loss function and optimizer
-criterion = nn.MSELoss()  # Mean Squared Error (MSE) for regression
+criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-
-num_epochs = 80  # Number of epochs
-
 # Training loop
+num_epochs = 80
 for epoch in range(num_epochs):
     model.train()
+    total_loss = 0
     for batch_idx, (X_batch, y_batch) in enumerate(train_loader):
-        optimizer.zero_grad()  # Zero the gradients
-        
-        # Forward pass
+        optimizer.zero_grad()
         y_pred = model(X_batch)
-        
-        # Compute the loss
         loss = criterion(y_pred, y_batch)
-        
-        # Backward pass and optimization
         loss.backward()
         optimizer.step()
+        total_loss += loss.item()
     
-    # Print loss for every epoch
-    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
+    avg_loss = total_loss / len(train_loader)
+    if (epoch + 1) % 10 == 0:
+        print(f'Epoch [{epoch+1}/{num_epochs}], Average Loss: {avg_loss:.4f}')
 
-
-model.eval()  # Set model to evaluation mode
+# Evaluation
+model.eval()
 with torch.no_grad():
     test_preds = []
     test_labels = []
@@ -139,17 +134,81 @@ with torch.no_grad():
 test_preds = np.concatenate(test_preds, axis=0)
 test_labels = np.concatenate(test_labels, axis=0)
 
-# Rescale the predictions and actual values
-test_preds_rescaled = target_scaler.inverse_transform(test_preds)
-test_labels_rescaled = target_scaler.inverse_transform(test_labels)
+# Create a DataFrame for inverse transform
+pred_df = pd.DataFrame(np.zeros((len(test_preds), len(features))), columns=features)
+pred_df[target] = test_preds
+label_df = pd.DataFrame(np.zeros((len(test_labels), len(features))), columns=features)
+label_df[target] = test_labels
 
-# Plot predictions vs actual values
-import matplotlib.pyplot as plt
+# Rescale predictions and actual values
+test_preds_rescaled = scaler.inverse_transform(pred_df)[range(len(test_preds)), features.index(target)]
+test_labels_rescaled = scaler.inverse_transform(label_df)[range(len(test_labels)), features.index(target)]
 
-plt.figure(figsize=(10,6))
+# Calculate accuracy metrics
+def calculate_metrics(y_true, y_pred):
+    # R² Score
+    r2 = r2_score(y_true, y_pred)
+    
+    # Root Mean Squared Error (RMSE)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    
+    # Mean Absolute Percentage Error (MAPE)
+    mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+    
+    # Direction Accuracy (percentage of correct direction predictions)
+    direction_true = np.diff(y_true) > 0
+    direction_pred = np.diff(y_pred) > 0
+    direction_accuracy = np.mean(direction_true == direction_pred) * 100
+    
+    return r2, rmse, mape, direction_accuracy
+
+# Calculate and print all metrics
+r2, rmse, mape, direction_accuracy = calculate_metrics(test_labels_rescaled, test_preds_rescaled)
+
+print("\nModel Performance Metrics:")
+print(f"R² Score: {r2:.4f}")
+print(f"Root Mean Squared Error: {rmse:.2f}")
+print(f"Mean Absolute Percentage Error: {mape:.2f}%")
+print(f"Direction Accuracy: {direction_accuracy:.2f}%")
+
+# Plot results
+plt.figure(figsize=(12, 6))
 plt.plot(test_labels_rescaled, label='True Prices')
 plt.plot(test_preds_rescaled, label='Predicted Prices')
+plt.title(f'Price Prediction (R² = {r2:.4f}, Direction Accuracy = {direction_accuracy:.2f}%)')
+plt.xlabel('Time')
+plt.ylabel('Price')
 plt.legend()
 plt.show()
 
-torch.save(model.state_dict(), 'stock_lstm_model.pth')
+# Define the save path
+save_path = 'stock_lstm_model2.pth'
+
+# Try to save the model and verify it was saved
+try:
+    # Save the model
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'features': features,
+        'input_features': input_features,
+        'target': target,
+        'scaler': scaler,
+        'metrics': {
+            'r2': r2,
+            'rmse': rmse,
+            'mape': mape,
+            'direction_accuracy': direction_accuracy
+        }
+    }, save_path)
+    
+    # Verify the file was created
+    if os.path.exists(save_path):
+        print(f"\nModel successfully saved to: {os.path.abspath(save_path)}")
+        print(f"File size: {os.path.getsize(save_path) / 1024:.2f} KB")
+    else:
+        print("\nError: Model file was not created")
+        
+except Exception as e:
+    print(f"\nError saving model: {str(e)}")
+    print("Current working directory:", os.getcwd())
