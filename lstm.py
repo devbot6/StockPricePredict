@@ -20,22 +20,17 @@ df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601')
 df.set_index('timestamp', inplace=True)
 
 # Get all numerical features automatically
-features = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
+features = ['bar_open', 'bar_high', 'bar_low', 'bar_close', 'volume', 
+                           'trade_count', 'vwap', 'price_change', 'volume_change', 'high_low_spread', 
+                           'open_close_spread', 'ma5', 'ma20', 'volatility']
 print("\nNumerical features found:", features)
 
-# Check if 'trade_price' exists in the dataframe, if not, use the first numerical column as target
-if 'trade_price' in features:
-    target = 'trade_price'
-else:
-    target = features[0]  # Use first numerical column as target
-    print(f"\nWarning: 'trade_price' not found. Using '{target}' as target variable instead.")
+target = 'ma5'
 
-# Ensure target is in features for scaling
-if target not in features:
-    features.append(target)
+print(features)
 
 # Remove target from input features to avoid data leakage
-input_features = [f for f in features if f != target]
+input_features = [f for f in features]
 print(f"\nTarget variable: {target}")
 print(f"Input features: {input_features}")
 
